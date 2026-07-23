@@ -39,6 +39,74 @@ jobs:
 
       - name: Install cloudflared
         run: |
+          curl -L --retry 5 --retry-delay 5 https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+          cloudflared --version
+
+      - name: Debug Cloudflare Token
+        run: |
+          echo "Testing Cloudflare API token..."
+          RESPONSE=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${{ env.CF_ACCOUNT }}/tunnels" \
+               -H "Authorization: Bearer ${{ env.CF_TOKEN }}" \
+               -H "Content-Type: application/json")
+          echo "$RESPONSE"
+          if echo "$RESPONSE" | grep -q '"success":true'; then
+            echo "✅ Cloudflare token is valid!"
+          else
+            echo "❌ Cloudflare token failed. Check permissions."
+            exit 1
+          fi
+
+      - name: Auth Tunnel
+        run: |
+          echo "${{ env.CF_TOKEN }}" | cloudflared tunnel login
+          cloudflared tunnel create rdp-eternal || echo "Tunnel exists"
+
+      - name: Route Domain
+        run: |
+          TUNNEL_ID=$(cloudflared tunnel list | grep rdp-eternal | awk '{print $1}')
+          if [ -z "$TUNNEL_ID" ]; then
+            echo "❌ Tunnel not found!"
+            exit 1
+          fi
+          echo "Tunnel ID: $TUNNEL_ID"
+          cloudflared tunnel route dns $TUNNEL_ID ${{ env.DOMAIN }} || echo "DNS route exists"
+          mkdir -p ~/.cloudflared
+          cat > ~/.cloudflared/config.yml <<EOF
+          tunnel: $TUNNEL_ID
+          credentials-file: /home/runner/.cloudflared/$TUNNEL_ID.json
+          ingress:
+            - hostname: ${{ env.DOMAIN }}
+              service: rdp://localhost:3389
+            - service: http_status:404
+          EOF
+
+      - name: Launch Tunnel
+        run: |
+          nohup cloudflared tunnel --config ~/.cloudflared/config.yml run > tunnel.log 2>&1 &
+          sleep 15
+          cat tunnel.log
+          if grep -q "connection established" tunnel.log; then
+            echo "✅ Tunnel established!"
+          else
+            echo "⚠️ Tunnel may not be ready. Continuing..."
+          fi
+
+      - name: Notify Telegram
+        run: |
+          URL="https://${{ env.DOMAIN }}"
+          MSG="✅ RDP ACTIVE%0A🔗 $URL%0A👤 User: runner%0A🔑 Pass: ${{ env.RDP_PASS }}%0A⏳ Valid for 6 hours"
+          curl -s -X POST "https://api.telegram.org/bot${{ env.TG_BOT }}/sendMessage" \
+            -d chat_id="${{ env.TG_CHAT }}" \
+            -d text="$MSG"
+
+      - name: Keep Alive
+        run: sleep 999999999          sudo sed -i 's/^#*allow_blank_password=.*/allow_blank_password=false/' /etc/xrdp/xrdp.ini
+          sudo systemctl restart xrdp
+
+      - name: Install cloudflared
+        run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
