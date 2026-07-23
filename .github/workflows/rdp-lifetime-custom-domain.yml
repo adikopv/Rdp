@@ -1,4 +1,4 @@
-name: Eternal RDP Forge - Custom Domain Edition
+name: Eternal RDP Forge - Custom Domain
 
 on:
   push:
@@ -8,16 +8,15 @@ on:
   workflow_dispatch:
 
 env:
-  RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
-  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-  CLOUDFLARE_TUNNEL_NAME: "rdp-eternal"
-  CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}  # e.g., rdp.yourdomain.com
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  RDP_PASS: ${{ secrets.RDPPASSWORD }}
+  CF_TOKEN: ${{ secrets.CLOUDFLAREAPITOKEN }}
+  CF_ACCOUNT: ${{ secrets.CLOUDFLAREACCOUNTID }}
+  DOMAIN: ${{ secrets.CUSTOMDOMAIN }}
+  TG_BOT: ${{ secrets.TELEGRAMBOTTOKEN }}
+  TG_CHAT: ${{ secrets.TELEGRAMCHATID }}
 
 jobs:
-  forge-rdp:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
@@ -25,16 +24,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install desktop & RDP
+      - name: Install RDP
         run: |
           sudo apt update
           sudo apt install -y xfce4 xfce4-goodies xorg xrdp dbus-x11
           sudo systemctl enable xrdp
           sudo systemctl start xrdp
 
-      - name: Set RDP user password
+      - name: Set Password
         run: |
-          echo "runner:${{ env.RDP_PASSWORD }}" | sudo chpasswd
+          echo "runner:${{ env.RDP_PASS }}" | sudo chpasswd
           sudo sed -i 's/^#*allow_blank_password=.*/allow_blank_password=false/' /etc/xrdp/xrdp.ini
           sudo systemctl restart xrdp
 
@@ -44,39 +43,38 @@ jobs:
           chmod +x cloudflared-linux-amd64
           sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
 
-      - name: Authenticate Cloudflare Tunnel
+      - name: Auth Tunnel
         run: |
-          echo "${{ env.CLOUDFLARE_API_TOKEN }}" | cloudflared tunnel login
-          cloudflared tunnel create ${{ env.CLOUDFLARE_TUNNEL_NAME }} || echo "Tunnel already exists"
-          
-      - name: Route custom domain to tunnel
+          echo "${{ env.CF_TOKEN }}" | cloudflared tunnel login
+          cloudflared tunnel create rdp-eternal || echo "Tunnel exists"
+
+      - name: Route Domain
         run: |
-          TUNNEL_ID=$(cloudflared tunnel list | grep ${{ env.CLOUDFLARE_TUNNEL_NAME }} | awk '{print $1}')
-          cloudflared tunnel route dns $TUNNEL_ID ${{ env.CUSTOM_DOMAIN }} || echo "DNS route already exists"
-          
-          # Create config file for persistent mapping
+          TUNNEL_ID=$(cloudflared tunnel list | grep rdp-eternal | awk '{print $1}')
+          cloudflared tunnel route dns $TUNNEL_ID ${{ env.DOMAIN }} || echo "DNS route exists"
+          mkdir -p ~/.cloudflared
           cat > ~/.cloudflared/config.yml <<EOF
           tunnel: $TUNNEL_ID
           credentials-file: /home/runner/.cloudflared/$TUNNEL_ID.json
           ingress:
-            - hostname: ${{ env.CUSTOM_DOMAIN }}
+            - hostname: ${{ env.DOMAIN }}
               service: rdp://localhost:3389
             - service: http_status:404
           EOF
 
-      - name: Launch Tunnel with Custom Domain
+      - name: Launch Tunnel
         run: |
           nohup cloudflared tunnel --config ~/.cloudflared/config.yml run > tunnel.log 2>&1 &
           sleep 10
           cat tunnel.log
 
-      - name: Verify & Notify
+      - name: Notify Telegram
         run: |
-          DOMAIN="${{ env.CUSTOM_DOMAIN }}"
-          MESSAGE="🔥 RDP DOMAIN ACTIVE%0A🌐 https://$DOMAIN%0A👤 User: runner%0A🔑 Pass: ${{ env.RDP_PASSWORD }}%0A⏳ Valid until runner stops"
-          curl -s -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ env.TELEGRAM_CHAT_ID }}" \
-            -d text="$MESSAGE"
+          URL="https://${{ env.DOMAIN }}"
+          MSG="RDP ACTIVE%0A$URL%0AUser: runner%0APass: ${{ env.RDP_PASS }}"
+          curl -s -X POST "https://api.telegram.org/bot${{ env.TG_BOT }}/sendMessage" \
+            -d chat_id="${{ env.TG_CHAT }}" \
+            -d text="$MSG"
 
-      - name: Keep alive
+      - name: Keep Alive
         run: sleep 999999999
