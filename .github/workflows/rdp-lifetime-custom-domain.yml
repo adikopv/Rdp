@@ -1,0 +1,82 @@
+name: Eternal RDP Forge - Custom Domain Edition
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+
+env:
+  RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_TUNNEL_NAME: "rdp-eternal"
+  CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}  # e.g., rdp.yourdomain.com
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+jobs:
+  forge-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install desktop & RDP
+        run: |
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-goodies xorg xrdp dbus-x11
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+
+      - name: Set RDP user password
+        run: |
+          echo "runner:${{ env.RDP_PASSWORD }}" | sudo chpasswd
+          sudo sed -i 's/^#*allow_blank_password=.*/allow_blank_password=false/' /etc/xrdp/xrdp.ini
+          sudo systemctl restart xrdp
+
+      - name: Install cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          sudo mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+
+      - name: Authenticate Cloudflare Tunnel
+        run: |
+          echo "${{ env.CLOUDFLARE_API_TOKEN }}" | cloudflared tunnel login
+          cloudflared tunnel create ${{ env.CLOUDFLARE_TUNNEL_NAME }} || echo "Tunnel already exists"
+          
+      - name: Route custom domain to tunnel
+        run: |
+          TUNNEL_ID=$(cloudflared tunnel list | grep ${{ env.CLOUDFLARE_TUNNEL_NAME }} | awk '{print $1}')
+          cloudflared tunnel route dns $TUNNEL_ID ${{ env.CUSTOM_DOMAIN }} || echo "DNS route already exists"
+          
+          # Create config file for persistent mapping
+          cat > ~/.cloudflared/config.yml <<EOF
+          tunnel: $TUNNEL_ID
+          credentials-file: /home/runner/.cloudflared/$TUNNEL_ID.json
+          ingress:
+            - hostname: ${{ env.CUSTOM_DOMAIN }}
+              service: rdp://localhost:3389
+            - service: http_status:404
+          EOF
+
+      - name: Launch Tunnel with Custom Domain
+        run: |
+          nohup cloudflared tunnel --config ~/.cloudflared/config.yml run > tunnel.log 2>&1 &
+          sleep 10
+          cat tunnel.log
+
+      - name: Verify & Notify
+        run: |
+          DOMAIN="${{ env.CUSTOM_DOMAIN }}"
+          MESSAGE="🔥 RDP DOMAIN ACTIVE%0A🌐 https://$DOMAIN%0A👤 User: runner%0A🔑 Pass: ${{ env.RDP_PASSWORD }}%0A⏳ Valid until runner stops"
+          curl -s -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ env.TELEGRAM_CHAT_ID }}" \
+            -d text="$MESSAGE"
+
+      - name: Keep alive
+        run: sleep 999999999
