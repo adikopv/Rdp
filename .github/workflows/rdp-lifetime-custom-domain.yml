@@ -32,16 +32,11 @@ jobs:
 
       - name: Set Password
         run: |
-          # Hardcoded password - change this to whatever you want
           echo "runner:Kalix018" > /tmp/passwd.txt
           sudo chpasswd < /tmp/passwd.txt
           rm -f /tmp/passwd.txt
           sudo sed -i 's/^#*allow_blank_password=.*/allow_blank_password=false/' /etc/xrdp/xrdp.ini
           sudo systemctl restart xrdp
-
-      - name: Verify Password
-        run: |
-          echo "✅ Password set successfully for user: runner"
 
       - name: Install cloudflared
         run: |
@@ -53,14 +48,23 @@ jobs:
       - name: Debug Cloudflare Token
         run: |
           echo "Testing Cloudflare API token..."
-          RESPONSE=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${{ env.CF_ACCOUNT }}/tunnels" \
+          
+          # Test 1: Verify token works for account
+          RESPONSE1=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${{ env.CF_ACCOUNT }}" \
                -H "Authorization: Bearer ${{ env.CF_TOKEN }}" \
                -H "Content-Type: application/json")
-          echo "$RESPONSE"
-          if echo "$RESPONSE" | grep -q '"success":true'; then
-            echo "✅ Cloudflare token is valid!"
+          echo "Account check: $RESPONSE1"
+          
+          # Test 2: List tunnels using correct endpoint
+          RESPONSE2=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${{ env.CF_ACCOUNT }}/cloudflare-tunnel" \
+               -H "Authorization: Bearer ${{ env.CF_TOKEN }}" \
+               -H "Content-Type: application/json")
+          echo "Tunnel check: $RESPONSE2"
+          
+          if echo "$RESPONSE1" | grep -q '"success":true'; then
+            echo "✅ Cloudflare account is accessible!"
           else
-            echo "❌ Cloudflare token failed. Check permissions."
+            echo "❌ Account ID or token is invalid."
             exit 1
           fi
 
