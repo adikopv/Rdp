@@ -32,11 +32,10 @@ jobs:
 
       - name: Set Password
         run: |
-          # Set password using passwd with heredoc
-          sudo passwd runner <<EOF
-          Kalix018
-          Kalix018
-          EOF
+          # Hardcoded password - change this to whatever you want
+          echo "runner:Kalix018" > /tmp/passwd.txt
+          sudo chpasswd < /tmp/passwd.txt
+          rm -f /tmp/passwd.txt
           sudo sed -i 's/^#*allow_blank_password=.*/allow_blank_password=false/' /etc/xrdp/xrdp.ini
           sudo systemctl restart xrdp
 
