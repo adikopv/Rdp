@@ -7,13 +7,6 @@ on:
     - cron: '0 */4 * * *'
   workflow_dispatch:
 
-env:
-  CF_TOKEN: ${{ secrets.CLOUDFLAREAPITOKEN }}
-  CF_ACCOUNT: ${{ secrets.CLOUDFLAREACCOUNTID }}
-  DOMAIN: ${{ secrets.CUSTOMDOMAIN }}
-  TG_BOT: ${{ secrets.TELEGRAMBOTTOKEN }}
-  TG_CHAT: ${{ secrets.TELEGRAMCHATID }}
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -45,32 +38,20 @@ jobs:
           sudo mv cloudflared /usr/local/bin/
           cloudflared --version
 
-      - name: Debug Cloudflare Token
+      - name: Debug Cloudflare
         run: |
-          echo "Testing Cloudflare API token..."
+          echo "=== DEBUG ==="
+          echo "Account ID: ${{ secrets.CLOUDFLAREACCOUNTID }}"
+          echo "Token (first 10 chars): ${{ secrets.CLOUDFLAREAPITOKEN }}"
+          echo "Domain: ${{ secrets.CUSTOMDOMAIN }}"
           
-          # Test 1: Verify token works for account
-          RESPONSE1=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${{ env.CF_ACCOUNT }}" \
-               -H "Authorization: Bearer ${{ env.CF_TOKEN }}" \
-               -H "Content-Type: application/json")
-          echo "Account check: $RESPONSE1"
-          
-          # Test 2: List tunnels using correct endpoint
-          RESPONSE2=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${{ env.CF_ACCOUNT }}/cloudflare-tunnel" \
-               -H "Authorization: Bearer ${{ env.CF_TOKEN }}" \
-               -H "Content-Type: application/json")
-          echo "Tunnel check: $RESPONSE2"
-          
-          if echo "$RESPONSE1" | grep -q '"success":true'; then
-            echo "✅ Cloudflare account is accessible!"
-          else
-            echo "❌ Account ID or token is invalid."
-            exit 1
-          fi
+          curl -X GET "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLAREACCOUNTID }}" \
+               -H "Authorization: Bearer ${{ secrets.CLOUDFLAREAPITOKEN }}" \
+               -H "Content-Type: application/json"
 
       - name: Auth Tunnel
         run: |
-          echo "${{ env.CF_TOKEN }}" | cloudflared tunnel login
+          echo "${{ secrets.CLOUDFLAREAPITOKEN }}" | cloudflared tunnel login
           cloudflared tunnel create rdp-eternal || echo "Tunnel exists"
 
       - name: Route Domain
@@ -81,13 +62,13 @@ jobs:
             exit 1
           fi
           echo "Tunnel ID: $TUNNEL_ID"
-          cloudflared tunnel route dns $TUNNEL_ID ${{ env.DOMAIN }} || echo "DNS route exists"
+          cloudflared tunnel route dns $TUNNEL_ID ${{ secrets.CUSTOMDOMAIN }} || echo "DNS route exists"
           mkdir -p ~/.cloudflared
           cat > ~/.cloudflared/config.yml <<EOF
           tunnel: $TUNNEL_ID
           credentials-file: /home/runner/.cloudflared/$TUNNEL_ID.json
           ingress:
-            - hostname: ${{ env.DOMAIN }}
+            - hostname: ${{ secrets.CUSTOMDOMAIN }}
               service: rdp://localhost:3389
             - service: http_status:404
           EOF
@@ -105,10 +86,10 @@ jobs:
 
       - name: Notify Telegram
         run: |
-          URL="https://${{ env.DOMAIN }}"
+          URL="https://${{ secrets.CUSTOMDOMAIN }}"
           MSG="✅ RDP ACTIVE%0A🔗 $URL%0A👤 User: runner%0A🔑 Pass: Kalix018%0A⏳ Valid for 6 hours"
-          curl -s -X POST "https://api.telegram.org/bot${{ env.TG_BOT }}/sendMessage" \
-            -d chat_id="${{ env.TG_CHAT }}" \
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAMBOTTOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAMCHATID }}" \
             -d text="$MSG"
 
       - name: Keep Alive
